@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: bar-pdf-backend
+    runtime: node
+    plan: starter
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: SEGMENT
+        value: bar
