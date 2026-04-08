@@ -2,7 +2,9 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 
-const PORT = Number(process.env.PORT) || 8787;
+// Render (and most PaaS) require listening on 0.0.0.0 and process.env.PORT.
+const PORT = process.env.PORT ?? "8787";
+const HOST = process.env.HOST ?? "0.0.0.0";
 const SEGMENT = String(process.env.SEGMENT || "bar").trim().toLowerCase();
 
 const app = express();
@@ -21,6 +23,8 @@ app.get("/", (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`[bar-pdf-backend] listening on :${PORT} segment=${SEGMENT}`);
+app.listen(Number(PORT), HOST, () => {
+  console.log(
+    `[bar-pdf-backend] listening on http://${HOST}:${PORT} segment=${SEGMENT}`,
+  );
 });
