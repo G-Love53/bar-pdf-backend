@@ -1,0 +1,82 @@
+// src/generators/index.js
+import fsSync from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+import { getSegmentAssets } from "../utils/assets.js";
+import { loadGlobalCss } from "../utils/css.js";
+
+import { generate as svgGenerate } from "./svg-engine.js";
+import { generate as htmlGenerate } from "./html-engine.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load forms.json safely (no JSON import headaches)
+const formsPath = path.join(__dirname, "../config/forms.json");
+const forms = JSON.parse(fsSync.readFileSync(formsPath, "utf8"));
+
+function resolveFormsKey(formId) {
+  const id = String(formId || "").trim();
+
+  // acord125 -> ACORD125
+  const m = id.match(/^acord(\d+)$/i);
+  if (m) return `ACORD${m[1]}`;
+
+  // SUPP_BAR / LESSOR_A129S / LOGOS etc must match forms.json keys
+  if (/^SUPP_/i.test(id)) return id.toUpperCase();
+
+  // already canonical (ACORD125, ACORD25, LESSOR_A129S...)
+  return id.toUpperCase();
+}
+
+function getFormConfigOrThrow(formId) {
+  if (!formId) {
+    throw new Error(
+      "[Factory] Missing form_id on requestRow. Set requestRow.form_id explicitly (e.g., acord25, acord125, SUPP_BAR)."
+    );
+  }
+
+  const cfg = forms[resolveFormsKey(formId)];
+
+  if (!cfg) throw new Error(`[Factory] Configuration missing for form_id: ${formId}`);
+  if (cfg.enabled === false) throw new Error(`[Factory] Form ${formId} is disabled.`);
+
+  const engine = String(cfg.engine || "").toLowerCase();
+  if (engine !== "svg" && engine !== "html") {
+    throw new Error(`[Factory] Unknown engine type for ${formId}: ${cfg.engine}`);
+  }
+
+  if (!cfg.templatePath || typeof cfg.templatePath !== "string") {
+    throw new Error(`[Factory] Missing templatePath for form_id: ${formId}`);
+  }
+
+  return { ...cfg, engine };
+}
+
+export async function generateDocument(requestRow) {
+  const formId = requestRow?.form_id; // NO FALLBACK. Prevents wrong-template routing.
+  const formConfig = getFormConfigOrThrow(formId, requestRow?.segment);
+
+  const assets = getSegmentAssets(requestRow?.segment);
+
+  const jobData = {
+    requestRow,
+    assets,
+    templatePath: formConfig.templatePath,
+    globalCss: null,
+  };
+
+  console.log(
+    `[Factory] id=${requestRow?.id} form_id=${formId} seg=${requestRow?.segment || "default"} engine=${formConfig.engine} templatePath=${formConfig.templatePath}`
+  );
+
+  if (formConfig.engine === "svg") {
+    return await svgGenerate(jobData);
+  }
+
+  // html
+  jobData.globalCss = loadGlobalCss();
+  return await htmlGenerate(jobData);
+}
+

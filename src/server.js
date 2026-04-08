@@ -1,30 +1,752 @@
 import "dotenv/config";
-import cors from "cors";
+import fsSync from "fs";
 import express from "express";
+import path from "path";
+import crypto from "crypto";
+import { fileURLToPath } from "url";
 
-// Render (and most PaaS) require listening on 0.0.0.0 and process.env.PORT.
-const PORT = process.env.PORT ?? "8787";
-const HOST = process.env.HOST ?? "0.0.0.0";
-const SEGMENT = String(process.env.SEGMENT || "bar").trim().toLowerCase();
+import { generateDocument } from "./generators/index.js";
+import { sendWithGmail } from "./email.js";
+import { recordSubmission, getPool } from "./db.js";
+import { DocumentRole, DocumentType, StorageProvider } from "./constants/postgresEnums.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const formsPath = path.join(__dirname, "config", "forms.json");
+const FORMS = JSON.parse(fsSync.readFileSync(formsPath, "utf8"));
+
+const FILENAME_MAP = {
+  ACORD125: "ACORD-125.pdf",
+  ACORD126: "ACORD-126.pdf",
+  ACORD130: "ACORD-130.pdf",
+  ACORD140: "ACORD-140.pdf",
+  ACORD25: "ACORD-25.pdf",
+  SUPP_BAR: "Supplemental-Application.pdf",
+};
+
+const resolveTemplate = (name) => String(name || "").trim().toUpperCase();
 
 const app = express();
-app.use(cors());
+
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-API-Key",
+  );
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json({ limit: "25mb" }));
 
+const SEGMENT_DEFAULT = String(process.env.SEGMENT || "bar").trim().toLowerCase();
+
 app.get("/healthz", (_req, res) => {
-  res.status(200).json({ ok: true, segment: SEGMENT });
+  res.status(200).json({ ok: true, segment: SEGMENT_DEFAULT });
 });
 
 app.get("/", (_req, res) => {
   res.status(200).json({
     service: "bar-pdf-backend",
-    segment: SEGMENT,
-    note: "Bar intake scaffold; submit-quote and render paths to be added from pdf-backend.",
+    segment: SEGMENT_DEFAULT,
+    intake: "POST /submit-quote",
   });
 });
 
+app.get("/debug-db", (_req, res) => {
+  res.json({
+    ok: true,
+    hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+  });
+});
+
+app.get("/__version", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "bar-pdf-backend",
+    commit: process.env.RENDER_GIT_COMMIT || null,
+    node: process.version,
+    time: new Date().toISOString(),
+  });
+});
+
+console.log(
+  "[BOOT] bar-pdf-backend commit=",
+  process.env.RENDER_GIT_COMMIT,
+  "segment=",
+  SEGMENT_DEFAULT,
+);
+
+
+// Helper: Data Mapping — add ACORD-expected keys from Bar form so ACORD PDFs fill
+async function maybeMapData(name, rawData) {
+  const d = { ...rawData };
+  const get = (k) => (d[k] != null && d[k] !== "") ? d[k] : undefined;
+  // SUPP_BAR: build premises_address from ACORD-style physical_* when form sends those
+  if (name === "SUPP_BAR") {
+    if (get("premises_address") == null) {
+      const parts = [d.physical_address_1 || d.premise_address, d.physical_city || d.premise_city, d.physical_state || d.premise_state, d.physical_zip || d.premise_zip].filter(Boolean);
+      if (parts.length) d.premises_address = parts.join(", ");
+    }
+    if (get("insured_name") == null && get("premises_name")) d.insured_name = d.premises_name;
+    if (get("insured_name") == null && get("applicant_name")) d.insured_name = d.applicant_name;
+    // DATE: no form field for "today" — auto-set so SUPP shows current date
+    if (get("date") == null && get("policy_effective_date")) d.date = d.policy_effective_date;
+    if (get("date") == null) {
+      const today = new Date();
+      const y = today.getFullYear(), m = String(today.getMonth() + 1).padStart(2, "0"), day = String(today.getDate()).padStart(2, "0");
+      d.date = `${y}-${m}-${day}`;
+      d.date_2 = d.date;
+    }
+    if (get("date_2") == null && get("date")) d.date_2 = d.date;
+    // Q17: Solid Fuel 10ft from unit on SUPP = form "Smoker within 10ft" (solid_fuel_smoker_grill_within_10_ft)
+    if (get("full_limited_none12_solid_fuel_10_ft_from_unit") == null && get("solid_fuel_smoker_grill_within_10_ft")) d.full_limited_none12_solid_fuel_10_ft_from_unit = d.solid_fuel_smoker_grill_within_10_ft;
+    // Q18: Any cooking surfaces not protected → SUPP "13. Any cooking"
+    if (get("13_any_cooking_s") == null && get("ul_suppression_over_cooking")) d["13_any_cooking_s"] = d.ul_suppression_over_cooking;
+    // Page 1: when No, show "See Page 2"; full explanation only on page 2 (opening_plan_details, prior_experience_details)
+    if (d["1_open_for_business_now_or_within_60_days"] === "No") d.if_no_explain = "See Page 2";
+    if (d["2_at_least_3_years_restaurantbar_ownership_in_last_5_years"] === "No" || d["2_at_least_3_years_restaurantbar_ownership_in_last_5_years_2"] === "No") d.if_no_prior_experie = "See Page 2";
+  }
+
+  if (/^ACORD\d+$/i.test(name)) {
+    if (get("insured_name") == null && get("applicant_name")) d.insured_name = d.applicant_name;
+    if (get("physical_address_1") == null && get("premises_address")) d.physical_address_1 = d.premises_address;
+    if (get("physical_address_1") == null && get("premise_address")) d.physical_address_1 = d.premise_address;
+    if (get("physical_city") == null && get("premise_city")) d.physical_city = d.premise_city;
+    if (get("physical_state") == null && get("premise_state")) d.physical_state = d.premise_state;
+    if (get("physical_zip") == null && get("premise_zip")) d.physical_zip = d.premise_zip;
+    if (get("date") == null && get("effective_date")) d.date = d.effective_date;
+    if (get("date") == null && get("policy_effective_date")) d.date = d.policy_effective_date;
+    if (get("policy_effective_date") == null && get("effective_date")) d.policy_effective_date = d.effective_date;
+    if (get("business_website") == null && get("premises_website")) d.business_website = d.premises_website;
+    if (get("producer_email") == null && get("contact_email")) d.producer_email = d.contact_email;
+    if (get("producer_phone") == null && get("business_phone")) d.producer_phone = d.business_phone;
+    if (d.org_type_llc === "Yes") d.llc = "Yes";
+    if (d.org_type_corporation === "Yes") d.corporation = "Yes";
+    if (d.org_type_individual === "Yes") d.individual = "Yes";
+    // ACORD125 page-2 first location (accept ACORD physical_* or legacy premise_*)
+    if (get("premise_address_1") == null && get("premises_address")) d.premise_address_1 = d.premises_address;
+    if (get("premise_address_1") == null && get("physical_address_1")) d.premise_address_1 = [d.physical_address_1, d.physical_city, d.physical_state, d.physical_zip].filter(Boolean).join(", ");
+    if (get("premise_city_1") == null && get("premise_city")) d.premise_city_1 = d.premise_city;
+    if (get("premise_city_1") == null && get("physical_city")) d.premise_city_1 = d.physical_city;
+    if (get("contact_name") == null && get("applicant_name")) d.contact_name = d.applicant_name;
+    if (get("contact_name") == null && get("insured_name")) d.contact_name = d.insured_name;
+    if (get("contact_email_1") == null && get("contact_email")) d.contact_email_1 = d.contact_email;
+    if (get("contact_email_1") == null && get("producer_email")) d.contact_email_1 = d.producer_email;
+    if (get("contact_business_phone") == null && get("business_phone")) d.contact_business_phone = d.business_phone;
+    if (get("annual_revenue_1") == null && get("total_sales")) d.annual_revenue_1 = d.total_sales;
+    if (get("total_squarefeet_1") == null && get("square_footage")) d.total_squarefeet_1 = d.square_footage;
+    // Additional Insured (Bar form → ACORD names; first AI block)
+    if (get("ai_name") == null && get("ai_name_1")) d.ai_name = d.ai_name_1;
+    if (get("ai_address") == null && get("ai_address_1")) d.ai_address = d.ai_address_1;
+    if (get("ai_city") == null && get("ai_city_1")) d.ai_city = d.ai_city_1;
+    if (get("ai_state") == null && get("ai_state_1")) d.ai_state = d.ai_state_1;
+    if (get("ai_zip") == null && get("ai_zip_1")) d.ai_zip = d.ai_zip_1;
+    if (get("ai_losspayee") == null && get("ai_loss_payee")) d.ai_losspayee = d.ai_loss_payee;
+    if (get("ai_lienholder") == null && get("ai_lienholder")) d.ai_lienholder = d.ai_lienholder;
+    if (get("ai_mortgage") == null && get("ai_mortgagee")) d.ai_mortgage = d.ai_mortgagee;
+    if (get("ai_insured") == null && get("ai_additional_insured")) d.ai_insured = d.ai_additional_insured;
+    // ACORD130 (Workers Comp): Index now sends num_ft_employees, num_pt_employees, annual_payroll; fallback from legacy wc_*
+    if (name === "ACORD130") {
+      if (get("num_ft_employees") == null && get("wc_employees_ft") != null) d.num_ft_employees = d.wc_employees_ft;
+      if (get("num_pt_employees") == null && get("wc_employees_pt") != null) d.num_pt_employees = d.wc_employees_pt;
+      if (get("annual_payroll") == null && get("wc_annual_payroll") != null) d.annual_payroll = d.wc_annual_payroll;
+      if (get("mailing_state") == null && get("physical_state")) d.mailing_state = d.physical_state;
+    }
+
+    // --- BAR SEGMENT ONLY: extra text/checkboxes for ACORDs (does not change universal ACORD for other segments) ---
+    // Default "bar" so this backend (cid-pdf-api) runs Bar block even if Render env SEGMENT is not set
+    const segment = String(d.segment || process.env.SEGMENT || "bar").trim().toLowerCase();
+    if (segment === "bar") {
+      if (name === "ACORD125") {
+        // Bar: Lines of Business — add "X" to GL, Property (when "Do you want property coverage" Yes), Cyber (when selected), Liquor Liability
+        if (get("coverage_gl") == null) d.coverage_gl = "X";
+        if (get("coverage_liquor") == null) d.coverage_liquor = "X";
+        if (get("umbrella") == null) d.umbrella = "X";
+        if (get("coverage_hnoa") == null) d.coverage_hnoa = "X";
+        if (get("coverage_property") == null && (d.want_property_coverage === "Yes" || d.property_coverage === "Yes" || d.commercial_property === "Yes")) d.coverage_property = "X";
+        if (get("coverage_cyber") == null && (d.want_cyber_coverage === "Yes" || d.cyber_coverage === "Yes")) d.coverage_cyber = "X";
+        // Premise info: use number_of_employees for FT when no WC section
+        if (get("num_ft_employees") == null && get("number_of_employees") != null) d.num_ft_employees = d.number_of_employees;
+        if (get("num_pt_employees") == null) d.num_pt_employees = "0";
+        // Loss History (page 4): # of claims and Type/Description
+        if (get("total_claims") == null && get("number_of_claims") != null) d.total_claims = d.number_of_claims;
+        if (get("typeofclaim_1") == null && get("claim_description") != null) d.typeofclaim_1 = d.claim_description;
+      }
+      if (name === "ACORD126") {
+        // Bar only: LOC 1,2,3 all text "1"; HAZ num 1,2,3 = "1","2","3"; premium basis and exposure from form
+        if (get("hazzards_loc_1") == null) d.hazzards_loc_1 = "1";
+        if (get("hazzards_loc_2") == null) d.hazzards_loc_2 = "1";
+        if (get("hazzards_loc_3") == null) d.hazzards_loc_3 = "1";
+        if (get("hazzards_num_1") == null) d.hazzards_num_1 = "1";
+        if (get("hazzards_num_2") == null) d.hazzards_num_2 = "2";
+        if (get("hazzards_num_3") == null) d.hazzards_num_3 = "3";
+        if (get("prem_basis_1") == null) d.prem_basis_1 = "GROSS REV";
+        if (get("prem_basis_2") == null) d.prem_basis_2 = "LIQ REV";
+        if (get("prem_basis_3") == null) d.prem_basis_3 = "SQUARE FT";
+        if (get("exposure_1") == null && get("total_sales") != null) d.exposure_1 = d.total_sales;
+        if (get("exposure_2") == null && get("alcohol_sales") != null) d.exposure_2 = d.alcohol_sales;
+        if (get("exposure_3") == null && get("square_footage") != null) d.exposure_3 = d.square_footage;
+      }
+      if (name === "ACORD130") {
+        // Bar: class code 9084, category BAR TAVERN; location_1 text "1"
+        if (get("location_1") == null) d.location_1 = "1";
+        if (get("class_code") == null) d.class_code = "9084";
+        if (get("category_description") == null) d.category_description = "BAR TAVERN";
+      }
+      if (name === "ACORD140") {
+        // Bar: Subject of Insurance text; deduct_2 $2500 ALS; sprinkler YES + SPRINKLERS when automatic_sprinkler Yes
+        if (get("sub_insurance_1") == null) d.sub_insurance_1 = "BUILDING";
+        if (get("sub_insurance_2") == null) d.sub_insurance_2 = "BUS Personal Prop";
+        if (get("sub_insurance_3") == null) d.sub_insurance_3 = "Business Income";
+        if (get("deduct_2") == null) d.deduct_2 = "$2500";
+        if (get("deduct_type_2") == null) d.deduct_type_2 = "ALS";
+        if (d.automatic_sprinkler === "Yes") {
+          if (get("percent_sprinkler") == null) d.percent_sprinkler = "YES";
+          if (get("type_of_fire_protection") == null) d.type_of_fire_protection = "SPRINKLERS";
+        }
+      }
+    }
+
+    // Smoker/grill notes (SUPP page-2 continuation; build from form if not provided)
+    if (get("smoker_grill_notes_cont") == null && get("solid_fuel_smoker_grill_within_10_ft") === "Yes") {
+      const parts = [];
+      if (d.unit_professionally_installed) parts.push("Professionally installed: " + d.unit_professionally_installed);
+      if (d.regularly_maintained) parts.push("Regularly maintained: " + d.regularly_maintained);
+      if (d.hood_duct_protection) parts.push("Hood/duct: " + d.hood_duct_protection);
+      if (d.class_k_or_2a_extinguisher_within_20_ft) parts.push("Class K/2A extinguisher: " + d.class_k_or_2a_extinguisher_within_20_ft);
+      if (parts.length) d.smoker_grill_notes_cont = parts.join("; ");
+    }
+  }
+  return d;
+}
+
+async function captureClientSubmissionPdf({
+  segment,
+  submissionPublicId,
+  clientId,
+  submissionId,
+  formData,
+}) {
+  if (!submissionPublicId || !segment) {
+    console.log(
+      "[submit-quote] client_submission skipped (missing submissionPublicId or segment)",
+      { submissionPublicId, segment },
+    );
+    return null;
+  }
+
+  try {
+    console.log("[submit-quote] client_submission start", {
+      submissionPublicId,
+      segment,
+      hasClientId: Boolean(clientId),
+      hasSubmissionId: Boolean(submissionId),
+    });
+
+    const requestRow = {
+      ...formData,
+      segment,
+      submission_public_id: submissionPublicId,
+      form_id: "CLIENT_SUBMISSION",
+    };
+
+    const { buffer } = await generateDocument(requestRow);
+    console.log("[submit-quote] client_submission rendered", {
+      submissionPublicId,
+      bytes: buffer?.length || 0,
+    });
+
+    const { uploadBuffer } = await import("./services/r2Service.js");
+    const pool = getPool();
+    const seg = String(segment || "bar").toLowerCase();
+
+    const pathKey = `submissions/${seg}/${submissionPublicId}/client-submission.pdf`;
+
+    await uploadBuffer(pathKey, buffer, "application/pdf", {
+      segment: seg,
+      type: "client_submission",
+    });
+    console.log("[submit-quote] client_submission uploaded", {
+      submissionPublicId,
+      pathKey,
+    });
+
+    if (pool && clientId && submissionId) {
+      const sha = crypto.createHash("sha256").update(buffer).digest("hex");
+      await pool.query(
+        `
+          INSERT INTO documents (
+            client_id,
+            submission_id,
+            quote_id,
+            policy_id,
+            document_type,
+            document_role,
+            storage_provider,
+            storage_path,
+            mime_type,
+            sha256_hash,
+            is_original,
+            created_by
+          )
+          VALUES (
+            $1,
+            $2,
+            NULL,
+            NULL,
+            $3,
+            $4,
+            $5,
+            $6,
+            'application/pdf',
+            $7,
+            FALSE,
+            'system'
+          )
+        `,
+        [
+          clientId,
+          submissionId,
+          DocumentType.PDF,
+          DocumentRole.APPLICATION_ORIGINAL,
+          StorageProvider.R2,
+          pathKey,
+          sha,
+        ],
+      );
+      console.log("[submit-quote] client_submission document row inserted", {
+        submissionPublicId,
+      });
+    } else {
+      console.log("[submit-quote] client_submission document row skipped", {
+        submissionPublicId,
+        hasPool: Boolean(pool),
+        hasClientId: Boolean(clientId),
+        hasSubmissionId: Boolean(submissionId),
+      });
+    }
+
+    return {
+      filename: "Client-Submission.pdf",
+      buffer,
+      contentType: "application/pdf",
+    };
+  } catch (err) {
+    console.error(
+      "[submit-quote] client_submission generate failed:",
+      err?.message || err,
+    );
+    return null;
+  }
+}
+
+// Helper: Render Bundle
+async function renderBundleAndRespond({ templates, email, extraAttachments = [] }, res) {
+  if (!Array.isArray(templates) || templates.length === 0) {
+    return res.status(400).json({ ok: false, error: "NO_TEMPLATES" });
+  }
+
+  const results = [];
+
+  for (const t of templates) {
+    const original = String(t.name || "").trim();
+    const name = resolveTemplate(original);
+
+// Resolve once
+const rawData = t.data || {};
+const unified = await maybeMapData(name, rawData);
+
+// RSS: segment comes from request payload when present; env remains fallback.
+unified.segment = String(rawData.segment || process.env.SEGMENT || "bar").trim().toLowerCase();
+// form_id must match forms.json resolution rules
+if (/^ACORD\d+$/i.test(name)) {
+  unified.form_id = name.toLowerCase();      // ACORD125 -> acord125
+} else {
+  unified.form_id = name.toUpperCase();      // SUPP_BAR -> SUPP_BAR, LESSOR_A129S -> LESSOR_A129S
+}
+
+
+try {
+  const { buffer } = await generateDocument(unified);
+  const prettyName = FILENAME_MAP[name] || t.filename || `${name}.pdf`;
+  results.push({ status: "fulfilled", value: { filename: prettyName, buffer, contentType: "application/pdf" } });
+} catch (err) {
+  console.error(`❌ Render Error for ${name}:`, err.message);
+  results.push({ status: "rejected", reason: err?.message || String(err) });
+}
+
+  }
+
+  const baseAttachments = results
+    .filter((r) => r.status === "fulfilled")
+    .map((r) => r.value);
+
+  const attachments = [...baseAttachments, ...(extraAttachments || [])];
+
+  if (email?.to?.length) {
+    await sendWithGmail({
+      to: email.to,
+      subject: email.subject || "Submission Packet",
+      formData: email.formData,
+      html: email.bodyHtml,
+      attachments,
+      headers: email.headers || {},
+    });
+    return res.json({ ok: true, success: true, sent: true, count: attachments.length });
+  }
+
+  if (attachments.length > 0) {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${attachments[0].filename}"`);
+      res.send(attachments[0].buffer);
+  } else {
+      res.status(500).send("No valid PDFs were generated.");
+  }
+}
+
+// 1. Render Bundle Endpoint (render-only)
+app.post("/render-bundle", async (req, res) => {
+  try {
+    const body = req.body || {};
+
+    // Accept either templates[] OR bundle_id (+ data/formData)
+    if ((!Array.isArray(body.templates) || body.templates.length === 0) && body.bundle_id) {
+      const bundlesPath = path.join(__dirname, "config", "bundles.json");
+      const formsPath = path.join(__dirname, "config", "forms.json");
+
+      const bundles = JSON.parse(fsSync.readFileSync(bundlesPath, "utf8"));
+      const forms = JSON.parse(fsSync.readFileSync(formsPath, "utf8"));
+
+      const list = bundles[body.bundle_id];
+      if (!Array.isArray(list) || list.length === 0) {
+        return res.status(400).json({ ok: false, error: "UNKNOWN_BUNDLE" });
+      }
+
+      const mergedData = (body.formData && typeof body.formData === "object") ? body.formData
+        : (body.data && typeof body.data === "object") ? body.data
+        : {};
+
+      body.templates = list
+        .filter((name) => forms[name]?.enabled !== false)
+        .map((name) => ({ name, data: mergedData }));
+    }
+
+    await renderBundleAndRespond(body, res);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+
+// Submit Quote Endpoint (LEG 1) — CID RSS CANONICAL + DB write
+app.post("/submit-quote", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const formData =
+      body.data ||
+      body.formData ||
+      body.fields ||
+      body.requestRow?.data ||
+      body.requestRow?.fields ||
+      body.requestRow ||
+      {};
+    const bundle_id = body.bundle_id;
+    const segments = Array.isArray(body.segments) ? body.segments : [];
+    const segment = String(body.segment || process.env.SEGMENT || "").trim().toLowerCase();
+    const forceResubmit = body.force_resubmit === true;
+    const submissionIntent =
+      body.submission_intent === "corrected" || body.submission_intent === "new"
+        ? body.submission_intent
+        : null;
+
+    const pool = getPool();
+
+    // Phase 2: write into CID schema (best-effort) with duplicate detection
+    let submissionPublicId = null;
+    let dbResult = null;
+    try {
+      const primaryEmail =
+        formData.contact_email ||
+        formData.email ||
+        formData.applicant_email ||
+        null;
+
+      const businessName =
+        formData.insured_name ||
+        formData.premises_name ||
+        formData.business_name ||
+        null;
+
+      const postalCode =
+        formData.premise_zip ||
+        formData.physical_zip ||
+        formData.zip ||
+        null;
+
+      if (!forceResubmit && pool && (primaryEmail || (businessName && postalCode))) {
+        // Duplicate submission detection:
+        // - Same email alone is NOT a duplicate (one owner can submit multiple companies).
+        // - We treat it as duplicate only when business identity also matches.
+        // - If no email is present, fall back to business_name + zip matching.
+        const dupRes = await pool.query(
+          `
+            SELECT submission_id, submission_public_id
+            FROM submissions
+            WHERE segment = $1::segment_type
+              AND (
+                (
+                  $3::text IS NOT NULL
+                  AND (
+                    lower(COALESCE(raw_submission_json->>'insured_name', raw_submission_json->>'premises_name', raw_submission_json->>'business_name')) = lower($3)
+                    OR lower(COALESCE(raw_submission_json->>'business_name', raw_submission_json->>'insured_name', raw_submission_json->>'premises_name')) = lower($3)
+                  )
+                  AND (
+                    $2::text IS NULL
+                    OR lower(
+                      COALESCE(
+                        raw_submission_json->>'contact_email',
+                        raw_submission_json->>'email',
+                        raw_submission_json->>'applicant_email'
+                      )
+                    ) = lower($2)
+                  )
+                  AND (
+                    $4::text IS NULL
+                    OR COALESCE(raw_submission_json->>'premise_zip', raw_submission_json->>'physical_zip', raw_submission_json->>'zip') = $4
+                  )
+                )
+                OR (
+                  $2::text IS NULL
+                  AND $3::text IS NOT NULL
+                  AND $4::text IS NOT NULL
+                  AND lower(COALESCE(raw_submission_json->>'insured_name', raw_submission_json->>'premises_name', raw_submission_json->>'business_name')) = lower($3)
+                  AND COALESCE(raw_submission_json->>'premise_zip', raw_submission_json->>'physical_zip', raw_submission_json->>'zip') = $4
+                )
+              )
+            ORDER BY submission_id DESC
+            LIMIT 1
+          `,
+          [segment || "bar", primaryEmail, businessName, postalCode],
+        );
+
+        if (dupRes.rows.length > 0) {
+          const existing = dupRes.rows[0];
+          submissionPublicId = existing.submission_public_id;
+
+          try {
+            await pool.query(
+              `
+                INSERT INTO timeline_events (
+                  client_id,
+                  submission_id,
+                  event_type,
+                  event_label,
+                  event_payload_json,
+                  created_by
+                )
+                VALUES (
+                  NULL,
+                  $1,
+                  'submission.duplicate_detected',
+                  'Duplicate submission detected (no new outreach triggered)',
+                  $2,
+                  'system'
+                )
+              `,
+              [existing.submission_id, formData],
+            );
+          } catch (timelineErr) {
+            console.error(
+              "[submit-quote] duplicate timeline error:",
+              timelineErr.message || timelineErr,
+            );
+          }
+
+          return res.json({
+            ok: true,
+            success: true,
+            duplicate: true,
+            submission_public_id: submissionPublicId,
+          });
+        }
+      }
+
+      if (primaryEmail) {
+        const sourceDomain =
+          body.site_domain ||
+          req.headers.origin ||
+          req.headers.host ||
+          "unknown";
+
+        const sourceForm = bundle_id || "submit-quote";
+
+        const rawSubmission = {
+          ...formData,
+          segment,
+          bundle_id,
+          site_domain: body.site_domain,
+          submission_intent: submissionIntent,
+        };
+
+        dbResult = await recordSubmission({
+          segment,
+          sourceDomain,
+          sourceForm,
+          rawSubmission,
+          primaryEmail,
+          primaryPhone:
+            formData.business_phone ||
+            formData.applicant_phone ||
+            formData.phone ||
+            null,
+          firstName: formData.first_name || null,
+          lastName: formData.last_name || null,
+        });
+
+        if (dbResult?.submissionPublicId) {
+          submissionPublicId = dbResult.submissionPublicId;
+          console.log("[submit-quote] recorded submission", submissionPublicId);
+        } else {
+          console.log("[submit-quote] recordSubmission returned null (no DB write)");
+        }
+      }
+    } catch (dbErr) {
+      // Non-fatal: logging only so quoting continues even if DB is unavailable.
+      console.error("[submit-quote] DB write failed:", dbErr.message || dbErr);
+    }
+
+    // 1) Resolve template list from bundle_id (preferred) OR segments[] (legacy)
+    let templateNames = [];
+
+    if (bundle_id) {
+      const bundlesPath = path.join(__dirname, "config", "bundles.json");
+      const bundles = JSON.parse(fsSync.readFileSync(bundlesPath, "utf8"));
+      const list = bundles[bundle_id];
+
+      if (!Array.isArray(list) || list.length === 0) {
+        return res.status(400).json({ ok: false, success: false, error: "UNKNOWN_BUNDLE" });
+      }
+
+      templateNames = list;
+    } else {
+      // Legacy: map old segment names to canonical template names (forms.json keys)
+      const LEGACY_SEGMENT_MAP = {
+        SOCIETY_FIELDNAMES: "SUPP_BAR",
+        BARACCORD125: "ACORD125",
+        BARACCORD126: "ACORD126",
+        BARACCORD130: "ACORD130",
+        BARACCORD140: "ACORD140",
+      };
+      templateNames = segments
+        .map((s) => (LEGACY_SEGMENT_MAP[String(s || "").toUpperCase()] || String(s || "").trim()))
+        .filter((name) => {
+          const key = /^ACORD\d+$/i.test(name) ? name.toUpperCase() : name.toUpperCase();
+          return FORMS[key]; // drop WCBARFORM and any other unknown
+        });
+    }
+
+    if (!templateNames.length) {
+      return res.status(400).json({ ok: false, success: false, error: "NO_VALID_SEGMENTS" });
+    }
+
+    // 2) Build templates[] for renderBundleAndRespond
+    const templates = templateNames.map((name) => {
+      const resolved = resolveTemplate(name); // keeps your aliasing logic consistent
+      return {
+        name,
+        filename: FILENAME_MAP[resolved] || `${name}.pdf`,
+        data: { ...formData, segment },
+      };
+    });
+
+    // 3) Email block (canonical)
+    // Optional: CLIENT_SUBMISSION_EMAIL_TO sends the packet to a different mailbox than the
+    // carrier-reply poller inbox (cleanest split). Defaults match prior behavior.
+    const defaultTo =
+      process.env.CLIENT_SUBMISSION_EMAIL_TO?.trim() ||
+      process.env.CARRIER_EMAIL ||
+      process.env.GMAIL_USER;
+    const to =
+      body.email?.to?.length ? body.email.to
+      : body.email_to ? [body.email_to] // optional backward compat
+      : [defaultTo].filter(Boolean);
+
+    const applicant = (formData.applicant_name || formData.insured_name || "").trim();
+    const segLabel = segment ? segment.toUpperCase() : "CID";
+    const baseSubject =
+      body.email?.subject?.trim()
+      || `CID Submission Packet — ${segLabel}${applicant ? " — " + applicant : ""}`;
+
+    const subject = submissionPublicId
+      ? `${baseSubject} [${submissionPublicId}]`
+      : baseSubject;
+
+    const emailBlock = {
+      to,
+      subject,
+      formData,
+      ...((body.email && typeof body.email === "object") ? body.email : {}),
+      to,       // ensure canonical wins
+      subject,  // ensure canonical wins
+      formData, // ensure canonical wins
+      // So Gmail poller does not treat our own outbound submission packet as a carrier quote.
+      headers: {
+        ...((body.email && typeof body.email === "object" && body.email.headers) || {}),
+        "X-CID-Origin": "client-submission",
+      },
+    };
+
+    // 4) One call does it all (render + attach + email)
+        // Optionally capture a client-submission snapshot PDF and attach it
+        let extraAttachments = [];
+        if (submissionPublicId) {
+          const submissionAttachment = await captureClientSubmissionPdf({
+            segment,
+            submissionPublicId,
+            clientId: dbResult?.clientId,
+            submissionId: dbResult?.submissionId,
+            formData,
+          });
+          if (submissionAttachment) {
+            extraAttachments.push({
+              filename: submissionAttachment.filename,
+              buffer: submissionAttachment.buffer,
+              contentType: submissionAttachment.contentType,
+            });
+            console.log("[submit-quote] client_submission attachment ready", {
+              submissionPublicId,
+              extraAttachmentsCount: extraAttachments.length,
+            });
+          } else {
+            console.log("[submit-quote] client_submission attachment missing", {
+              submissionPublicId,
+            });
+          }
+        }
+
+        console.log("[submit-quote] dispatch render/email", {
+          submissionPublicId,
+          templateCount: templates.length,
+          extraAttachmentsCount: extraAttachments.length,
+        });
+        await renderBundleAndRespond(
+          { templates, email: emailBlock, extraAttachments },
+          res,
+        );
+  } catch (e) {
+    res.status(500).json({ ok: false, success: false, error: e.message });
+  }
+});
+
+const PORT = process.env.PORT ?? "8787";
+const HOST = process.env.HOST ?? "0.0.0.0";
+
 app.listen(Number(PORT), HOST, () => {
   console.log(
-    `[bar-pdf-backend] listening on http://${HOST}:${PORT} segment=${SEGMENT}`,
+    `[bar-pdf-backend] listening on http://${HOST}:${PORT} segment=${SEGMENT_DEFAULT}`,
   );
 });

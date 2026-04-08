@@ -1,0 +1,10 @@
+{
+  "BAR_INTAKE": [
+    "SUPP_BAR",
+    "ACORD125",
+    "ACORD126",
+    "ACORD130",
+    "ACORD140"
+  ],
+  "BAR_SUPP_ONLY": ["SUPP_BAR"]
+}
