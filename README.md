@@ -20,7 +20,11 @@ npm run dev
 
 ## Environment
 
-Copy **`PUPPETEER_EXECUTABLE_PATH`**, **`DATABASE_URL`**, Gmail, and R2 settings from the **CID-PDF-API** Render service unless you intentionally split credentials. See `.env.example`.
+See **`.env.example`**. Copy **`DATABASE_URL`**, Gmail, R2, etc. from your other segment backends or CID-PDF-API as needed.
+
+**Render:** Deploy with **`Dockerfile`** (same pattern as **plumber-pdf-backend**). Chrome is installed in the image; **`PUPPETEER_EXECUTABLE_PATH`** is set in the Dockerfile, not required in the Render env UI. If the service was created as a **Node** runtime, switch it to **Docker** (or apply `render.yaml`) and redeploy.
+
+**Local dev:** Install Chrome/Chromium or set **`PUPPETEER_EXECUTABLE_PATH`** to your binary if PDF generation fails.
 
 ## Related
 

@@ -1,15 +1,12 @@
 services:
   - type: web
     name: bar-pdf-backend
-    runtime: node
+    runtime: docker
     plan: starter
-    rootDir: .
-    buildCommand: git submodule update --init --recursive && npm install
-    startCommand: npm start
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
-      - key: NODE_VERSION
-        value: 20
       - key: SEGMENT
         value: bar
