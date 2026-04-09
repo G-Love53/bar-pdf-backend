@@ -27,15 +27,34 @@ const FILENAME_MAP = {
 
 const resolveTemplate = (name) => String(name || "").trim().toUpperCase();
 
-const app = express();
+/** Same env name as other segment Render services. Empty/unset → mirror `*` (plumber/roofer). Comma list → allowlist + reflect Origin. */
+function applyCorsHeaders(req, res) {
+  const raw = process.env.CORS_ORIGINS?.trim();
+  const allowList = raw
+    ? raw.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const origin = req.headers.origin;
 
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  if (allowList.length === 0) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (!origin) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (allowList.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+
   res.setHeader(
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, X-API-Key",
   );
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+}
+
+const app = express();
+
+app.use((req, res, next) => {
+  applyCorsHeaders(req, res);
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
