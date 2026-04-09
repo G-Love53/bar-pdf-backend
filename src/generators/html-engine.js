@@ -3,8 +3,6 @@ import ejs from "ejs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { getPuppeteerLaunchOptions } from "../utils/puppeteerChrome.js";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -24,11 +22,10 @@ export async function generate(jobData) {
       globalCss
     });
 
-    const launchOpts = await getPuppeteerLaunchOptions();
     browser = await puppeteer.launch({
-      executablePath: launchOpts.executablePath,
-      headless: launchOpts.headless,
-      args: launchOpts.args,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     });
 
     const page = await browser.newPage();

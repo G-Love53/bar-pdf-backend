@@ -3,8 +3,6 @@ import path from "path";
 import fsSync from "fs";
 import { fileURLToPath } from "url";
 
-import { getPuppeteerLaunchOptions } from "../utils/puppeteerChrome.js";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -191,13 +189,23 @@ function applyMapping(svg, pageMap, data, pageId = "", templatePath = "") {
 /* ---------------------------- BROWSER ---------------------------- */
 
 async function launchBrowser() {
-  const launchOpts = await getPuppeteerLaunchOptions([
-    "--font-render-hinting=none",
-  ]);
+  const executablePath =
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+    puppeteer.executablePath?.();
+
+  if (!executablePath) {
+    throw new Error("[SVG Engine] Chrome not found");
+  }
+
   return puppeteer.launch({
-    executablePath: launchOpts.executablePath,
-    headless: launchOpts.headless,
-    args: launchOpts.args,
+    executablePath,
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-gpu",
+      "--font-render-hinting=none",
+    ],
   });
 }
 
