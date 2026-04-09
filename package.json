@@ -9,6 +9,7 @@
     "dev": "node --watch src/server.js"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^131.0.0",
     "@aws-sdk/client-s3": "^3.708.0",
     "@aws-sdk/s3-request-presigner": "^3.1014.0",
     "@supabase/supabase-js": "^2.43.4",
