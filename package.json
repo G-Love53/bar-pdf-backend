@@ -6,6 +6,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "prestart": "node scripts/gen-forms-registry.mjs",
     "dev": "node --watch src/server.js"
   },
   "dependencies": {

@@ -27,45 +27,24 @@ const FILENAME_MAP = {
 
 const resolveTemplate = (name) => String(name || "").trim().toUpperCase();
 
-/** Same env name as other segment Render services. Empty/unset → mirror `*` (plumber/roofer). Comma list → allowlist + reflect Origin. */
-function applyCorsHeaders(req, res) {
-  const raw = process.env.CORS_ORIGINS?.trim();
-  const allowList = raw
-    ? raw.split(",").map((s) => s.trim()).filter(Boolean)
-    : [];
-  const origin = req.headers.origin;
-
-  if (allowList.length === 0) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-  } else if (!origin) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-  } else if (allowList.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-  }
-
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-API-Key",
-  );
-  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-}
-
 const app = express();
 
+app.use(express.json({ limit: "25mb" }));
+
 app.use((req, res, next) => {
-  applyCorsHeaders(req, res);
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-API-Key"
+  );
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 
-app.use(express.json({ limit: "25mb" }));
-
 const SEGMENT_DEFAULT = String(process.env.SEGMENT || "bar").trim().toLowerCase();
 
-app.get("/healthz", (_req, res) => {
-  res.status(200).json({ ok: true, segment: SEGMENT_DEFAULT });
-});
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 
 app.get("/", (_req, res) => {
   res.status(200).json({

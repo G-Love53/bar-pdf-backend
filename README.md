@@ -8,7 +8,10 @@ This repo includes the **`BAR_INTAKE`** bundle (`SUPP_BAR` + ACORD125/126/130/14
 
 ## Run locally
 
+Same flow as **plumber-pdf-backend** / other segments: `prestart` generates `src/config/forms.json` from `CID_HomeBase/templates` on `npm start`.
+
 ```bash
+git submodule update --init --recursive   # CID_HomeBase
 cp .env.example .env
 npm install
 npm run dev

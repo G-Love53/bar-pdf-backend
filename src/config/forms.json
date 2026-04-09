@@ -1,4 +1,14 @@
 {
+  "_SHARED": {
+    "enabled": true,
+    "engine": "svg",
+    "templatePath": "CID_HomeBase/templates/_SHARED"
+  },
+  "ACORD25": {
+    "enabled": true,
+    "engine": "svg",
+    "templatePath": "CID_HomeBase/templates/ACORD25"
+  },
   "ACORD125": {
     "enabled": true,
     "engine": "svg",
@@ -18,11 +28,6 @@
     "enabled": true,
     "engine": "svg",
     "templatePath": "CID_HomeBase/templates/ACORD140"
-  },
-  "ACORD25": {
-    "enabled": true,
-    "engine": "svg",
-    "templatePath": "CID_HomeBase/templates/ACORD25"
   },
   "LESSOR_A129S": {
     "enabled": true,
@@ -44,20 +49,20 @@
     "engine": "svg",
     "templatePath": "CID_HomeBase/templates/SUPP_CONTRACTOR"
   },
-  "SUPP_ROOFER": {
+  "SUPP_HVAC": {
     "enabled": true,
     "engine": "svg",
-    "templatePath": "CID_HomeBase/templates/SUPP_ROOFER"
+    "templatePath": "CID_HomeBase/templates/SUPP_HVAC"
   },
   "SUPP_PLUMBER": {
     "enabled": true,
     "engine": "svg",
     "templatePath": "CID_HomeBase/templates/SUPP_PLUMBER"
   },
-  "SUPP_HVAC": {
+  "SUPP_ROOFER": {
     "enabled": true,
     "engine": "svg",
-    "templatePath": "CID_HomeBase/templates/SUPP_HVAC"
+    "templatePath": "CID_HomeBase/templates/SUPP_ROOFER"
   },
   "CLIENT_SUBMISSION": {
     "enabled": true,
