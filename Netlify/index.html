@@ -37,6 +37,7 @@
     input[type="text"],
     input[type="email"],
     input[type="url"],
+    input[type="time"],
     input[type="date"],
     select,
     textarea {
@@ -52,12 +53,41 @@
     input[type="text"]:focus,
     input[type="email"]:focus,
     input[type="url"]:focus,
+    input[type="time"]:focus,
     input[type="date"]:focus,
     select:focus,
     textarea:focus {
         border-color: #ff8c00;
         outline: none;
         box-shadow: 0 0 5px rgba(255, 140, 0, 0.5);
+    }
+
+    .req-star {
+        color: #dc2626;
+        font-weight: 700;
+        margin-left: 2px;
+    }
+    .field-invalid,
+    label.field-invalid input,
+    label.field-invalid select,
+    label.field-invalid textarea {
+        border-color: #dc2626 !important;
+        box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.35);
+    }
+    #form-validation-banner {
+        display: none;
+        margin: 12px auto 0;
+        max-width: 800px;
+        padding: 12px 16px;
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        color: #991b1b;
+        font-size: 0.95em;
+    }
+    #org-type-hint.field-invalid {
+        color: #dc2626;
+        font-weight: 600;
     }
 
     /* Creative hero block (easily editable per segment) */
@@ -306,14 +336,15 @@
 </div>
 
 <h1>Bar, Tavern & Restaurant Insurance Quote</h1>
+<div id="form-validation-banner" role="alert"></div>
 <form id="quoteForm" name="bar-restaurant-quote">
     <input type="hidden" name="traffic_source" id="traffic_source" value="direct"/>
     <input type="hidden" name="campaign_id" id="campaign_id" value=""/>
     <details class="form-section" open>
         <summary class="form-section-title">Business Information</summary>
         <div class="section-body">
-            <label>Applicant Name:<input name="applicant_name" required type="text"/></label>
-            <label>Business Name:<input name="premises_name" type="text"/></label>
+            <label>Applicant Name:<span class="req-star" aria-hidden="true">*</span><input name="applicant_name" required type="text"/></label>
+            <label>Business Name:<span class="req-star" aria-hidden="true">*</span><input name="premises_name" required type="text"/></label>
             <label>Business Address:<input name="premise_address" required type="text"/></label>
             <div class="horizontal-group">
                 <div>
@@ -327,22 +358,22 @@
                 </div>
             </div>
             <input type="hidden" name="premises_address" id="premises_address_hidden"/>
-            <label>Type of Organization:</label>
+            <label>Type of Organization: <span id="org-type-hint" class="req-star" title="Select one">*</span></label>
             <div class="checkbox-horizontal">
                 <label><input type="checkbox" name="org_type_corporation" value="Yes"/> Corporation</label>
                 <label><input type="checkbox" name="org_type_llc" value="Yes"/> LLC</label>
                 <label><input type="checkbox" name="org_type_individual" value="Yes"/> Individual</label>
             </div>
-            <label>Business Phone:<input name="business_phone" type="text"/></label>
-            <label>Premises Website:<input name="premises_website" type="text"/></label>
-            <label>Contact Email Address:<input name="contact_email" type="email"/></label>
+            <label>Business Phone:<span class="req-star" aria-hidden="true">*</span><input name="business_phone" required type="text" inputmode="tel" placeholder="(303) 555-0100"/></label>
+            <label>Premises website (include https://):<span class="req-star" aria-hidden="true">*</span><input name="premises_website" type="url" required placeholder="https://yourrestaurant.com"/></label>
+            <label>Contact Email Address:<span class="req-star" aria-hidden="true">*</span><input name="contact_email" required type="email"/></label>
         </div>
     </details>
 
     <details class="form-section">
         <summary class="form-section-title">Premises &amp; Property</summary>
         <div class="section-body">
-            <label>Requested Effective Date:<input name="effective_date" type="date"/></label>
+            <label>Requested Effective Date:<span class="req-star" aria-hidden="true">*</span><input name="effective_date" required type="date"/></label>
 
     <!-- Question 1 (mapping: 1_open_for_business_now_or_within_60_days, opening_plan_details, if_no_explain) -->
     <label>1. Are you currently open or will be within 60 days?
@@ -375,7 +406,7 @@
     <input type="hidden" name="2_at_least_3_years_restaurantbar_ownership_in_last_5_years_2" id="ownership_2_hidden"/>
 
     <label>3. Business Personal Property in $ (movable items owned, equipment, inventory, furniture):<input name="business_personal_property" type="text" inputmode="decimal" placeholder="Enter amount"/></label>
-    <label>4. Square footage:<input name="total_squarefeet_1" type="text"/></label>
+    <label>4. Square footage:<span class="req-star" aria-hidden="true">*</span><input name="total_squarefeet_1" required type="text" inputmode="numeric" placeholder="e.g. 2500"/></label>
     <label>5. Construction Type:</label>
     <div class="checkbox-horizontal">
         <label><input type="checkbox" name="construction_frame" value="Yes"/> Frame</label>
@@ -423,7 +454,7 @@
         <div class="section-body">
     <div class="horizontal-group">
         <div>
-       <label>10. Business closing time:<input name="closing_time" type="time"/></label>
+       <label>10. Business closing time:<span class="req-star" aria-hidden="true">*</span><input name="closing_time" required type="time"/></label>
        </div>
         <div>
             <label>11. Is this a fine dining restaurant?
@@ -461,9 +492,10 @@
     </div>
     <input type="hidden" name="if_yes_more_than_25_for_onpremise_2" id="percent_25_2_hidden"/>
 
-    <label>14. Annual Receipts:</label>
-    <input name="food_sales" placeholder="Food Sales" type="text" inputmode="decimal"/>
-    <input name="alcohol_sales" placeholder="Alcohol Sales" type="text" inputmode="decimal"/>
+    <label>14. Annual Receipts: <span class="req-star" aria-hidden="true">*</span><span style="font-weight:normal;color:#666">(food + alcohol; totals feed ACORD gross revenue)</span></label>
+    <input name="food_sales" placeholder="Food Sales" type="text" inputmode="decimal" required/>
+    <input name="alcohol_sales" placeholder="Alcohol Sales" type="text" inputmode="decimal" required/>
+    <input type="hidden" name="total_sales" id="total_sales_hidden" value=""/>
     <input name="annual_revenue_1" placeholder="Total Sales" type="text" readonly/>
     <input name="Percent_Alcohol" placeholder="% Alcohol" type="text" readonly/>
 
@@ -651,13 +683,13 @@
             <label>Please explain:<input name="radius_5_miles_explanation" type="text"/></label>
         </div>
         <label>Do the delivery hours extend past 10 PM?
-            <select name="hours_past_10_pm" data-conditional="hours_past_10_pm">
+            <select name="delivery_hours_extend_past_10pm" data-conditional="delivery_hours_extend_past_10pm">
                 <option value="">-- Select --</option>
                 <option value="Yes">Yes</option>
                 <option value="No">No</option>
             </select>
         </label>
-        <div class="conditional-section" data-show-when="hours_past_10_pm=Yes">
+        <div class="conditional-section" data-show-when="delivery_hours_extend_past_10pm=Yes">
             <label>Please explain:<input name="after_10pm_explanation" type="text"/></label>
         </div>
         <input type="hidden" name="if_yes_explain" id="if_yes_explain_hidden"/>
@@ -867,6 +899,80 @@
         let lastSubmitTime = 0;
         const MIN_SUBMIT_INTERVAL = 2000; // 2 seconds between submissions
         
+        function clearValidationState() {
+            form.querySelectorAll(".field-invalid").forEach((el) => el.classList.remove("field-invalid"));
+            const banner = document.getElementById("form-validation-banner");
+            if (banner) {
+                banner.style.display = "none";
+                banner.textContent = "";
+            }
+        }
+        function markInvalid(el) {
+            if (!el) return;
+            el.classList.add("field-invalid");
+            const wrap = el.closest("label");
+            if (wrap) wrap.classList.add("field-invalid");
+        }
+        function validateWebsiteUrl(v) {
+            const s = String(v || "").trim();
+            if (!s) return false;
+            return /^https?:\/\//i.test(s);
+        }
+        function validateStarredFields() {
+            clearValidationState();
+            const missing = [];
+            const q = (n) => form.querySelector('[name="' + n + '"]');
+            const need = (el, label) => {
+                if (!el || (typeof el.value === "string" && !el.value.trim())) {
+                    markInvalid(el);
+                    missing.push(label);
+                }
+            };
+            need(q("premises_name"), "Business name");
+            need(q("business_phone"), "Business phone");
+            need(q("contact_email"), "Contact email");
+            need(q("effective_date"), "Requested effective date");
+            const sqEl = q("total_squarefeet_1");
+            const sqDigits = sqEl && String(sqEl.value).replace(/\D/g, "");
+            if (!sqEl || !String(sqEl.value).trim() || !sqDigits || parseInt(sqDigits, 10) <= 0) {
+                markInvalid(sqEl);
+                missing.push("Square footage");
+            }
+            need(q("closing_time"), "Business closing time");
+            const web = q("premises_website");
+            if (!validateWebsiteUrl(web && web.value)) {
+                markInvalid(web);
+                missing.push("Premises website (https://…)");
+            }
+            const orgOk = ["org_type_llc", "org_type_corporation", "org_type_individual"].some(
+                (n) => form.querySelector('[name="' + n + '"]:checked')
+            );
+            const orgHint = document.getElementById("org-type-hint");
+            if (!orgOk) {
+                if (orgHint) orgHint.classList.add("field-invalid");
+                missing.push("Organization type");
+            }
+            const foodEl = q("food_sales");
+            const alcEl = q("alcohol_sales");
+            const totalRev = strip(foodEl && foodEl.value) + strip(alcEl && alcEl.value);
+            if (totalRev <= 0) {
+                markInvalid(foodEl);
+                markInvalid(alcEl);
+                missing.push("Annual receipts (food and/or alcohol)");
+            }
+            if (missing.length) {
+                const banner = document.getElementById("form-validation-banner");
+                if (banner) {
+                    banner.textContent =
+                        "Please complete the starred fields (highlighted below).";
+                    banner.style.display = "block";
+                    banner.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+                return false;
+            }
+            return true;
+        }
+
         // LIGHT CLIENT-SIDE VALIDATION (email, phone, ZIP)
         function validateEmail(value) {
             if (!value) return false;
@@ -884,8 +990,16 @@
             return re.test(value.trim());
         }
         function showFieldError(input, message) {
+            clearValidationState();
+            markInvalid(input);
+            const banner = document.getElementById("form-validation-banner");
+            if (banner) {
+                banner.textContent = message;
+                banner.style.display = "block";
+                banner.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
             alert(message);
-            input.focus();
+            if (input && input.focus) input.focus();
         }
         
         // CONDITIONAL LOGIC SYSTEM
@@ -926,6 +1040,15 @@
         
         // Initialize conditional logic
         setupConditionalLogic();
+        ["org_type_llc", "org_type_corporation", "org_type_individual"].forEach((n) => {
+            const el = form.querySelector('[name="' + n + '"]');
+            if (el) {
+                el.addEventListener("change", () => {
+                    const h = document.getElementById("org-type-hint");
+                    if (h) h.classList.remove("field-invalid");
+                });
+            }
+        });
 
         // Calculation logic for receipts/percent alcohol
         const foodInput = document.querySelector('[name="food_sales"]');
@@ -951,6 +1074,8 @@
             const percent = total > 0 ? (alcohol / total) * 100 : 0;
             totalInput.value = format(total);
             percentInput.value = percent.toFixed(2) + "%";
+            const tsH = document.getElementById("total_sales_hidden");
+            if (tsH) tsH.value = total > 0 ? String(total) : "";
         }
         
         // Format food/alcohol sales with debouncing to prevent ghost submits
@@ -1030,8 +1155,6 @@
             });
         }
 
-        const websiteInput = document.querySelector('[name="premises_website"]');
-        if (websiteInput) websiteInput.setAttribute("type", "text");
 
         // PREVENT ENTER KEY SUBMITS ON ALL INPUTS
         document.querySelectorAll('input, select, textarea').forEach(input => {
@@ -1049,6 +1172,7 @@
         
         async function submitQuote({ forceResubmit = false, submissionIntent = null } = {}) {
             // BAR mapping: set combined/duplicate fields before FormData so PDFs fill
+            recalculate();
             const addr = form.querySelector('[name="premise_address"]');
             const city = form.querySelector('[name="premise_city"]');
             const state = form.querySelector('[name="premise_state"]');
@@ -1134,6 +1258,12 @@
             submitButton.textContent = "Submitting...";
 
             try {
+                if (!validateStarredFields()) {
+                    isSubmitting = false;
+                    submitButton.disabled = false;
+                    submitButton.textContent = "Submit";
+                    return false;
+                }
                 // Basic format validation before mapping
                 const emailInput = form.querySelector('[name="contact_email"]');
                 const phoneInput = form.querySelector('[name="business_phone"]');
@@ -1141,15 +1271,24 @@
 
                 if (emailInput && !validateEmail(emailInput.value)) {
                     showFieldError(emailInput, "Please enter a valid email address.");
-                    return;
+                    isSubmitting = false;
+                    submitButton.disabled = false;
+                    submitButton.textContent = "Submit";
+                    return false;
                 }
                 if (phoneInput && phoneInput.value && !validatePhone(phoneInput.value)) {
                     showFieldError(phoneInput, "Please enter a valid phone number (at least 10 digits).");
-                    return;
+                    isSubmitting = false;
+                    submitButton.disabled = false;
+                    submitButton.textContent = "Submit";
+                    return false;
                 }
                 if (zipInput && !validateZip(zipInput.value)) {
                     showFieldError(zipInput, "Please enter a valid ZIP code (5 digits or 5+4).");
-                    return;
+                    isSubmitting = false;
+                    submitButton.disabled = false;
+                    submitButton.textContent = "Submit";
+                    return false;
                 }
 
                 let result = await submitQuote();
