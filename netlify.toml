@@ -1,0 +1,8 @@
+# Bar segment Netlify: publish dir + clean privacy URL for Meta / footers
+[build]
+  publish = "Netlify"
+
+[[redirects]]
+  from = "/privacy"
+  to = "/privacy.html"
+  status = 301
